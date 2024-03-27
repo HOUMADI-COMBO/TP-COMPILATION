@@ -1,0 +1,274 @@
+package fr.uha.hassenforder.javacup.sample.jmusic.reader;
+
+parser import code {:
+import jm.music.data.Score;
+import jm.music.data.Part;
+import jm.music.data.Phrase;
+import jm.music.data.Note;
+import jm.music.data.Rest;
+import jm.JMC;
+
+import java.util.List;
+import java.util.ArrayList;
+:}
+
+parser code {:
+    
+    public void report_error(String message, Object info) {
+        StringBuffer m = new StringBuffer("Error");
+		m.append (info.toString());
+        m.append(" : "+message);
+        System.err.println(m.toString());
+    }
+   
+    public void report_fatal_error(String message, Object info) {
+        report_error(message, info);
+        System.exit(1);
+    }
+
+	private int channel = 0;
+	private int tempo = JMC.MP;
+	private int instrument = jm.JMC.TUBULAR_BELLS;
+	private int dynamic = JMC.MP;
+	private Phrase repeated;
+	static private class Signature {
+	   public int s;
+	   public int n;
+	   public int d;
+	   
+	   public Signature (int s, int n, int d) {
+		   this.s = s;
+		   this.n = n;
+		   this.d = d;
+	   }
+	}
+:}
+
+scanner code {:
+    private void fallback () {
+		throw new Error("Unrecognized character '"+yytext()+"' -- ignored");
+	}    
+:}
+terminal			TERM1, TERM2;
+
+terminal			PLAY, VIEW, SAVE;
+terminal			SLASH, BEGIN, REPEAT, END, ALTERNATE;
+terminal Integer	PITCH, ALTERATION;
+terminal			REST;
+terminal Double		RHYTHM;
+terminal Integer	INTEGER, DYNAMIC;
+terminal Integer	INSTRUMENT;
+
+nonterminal 		score, tempo, instrument, main;
+nonterminal Integer actions, todo;
+nonterminal	Signature	signature;
+nonterminal Score	parts;
+nonterminal Part	part, phrases;
+nonterminal Phrase	phrase, notes, alternate;
+nonterminal List<Phrase>	alternates;
+nonterminal Note	note, rest;
+nonterminal Note	sound;
+nonterminal			dynamic;
+nonterminal Integer	pitch, alteration, octave;
+nonterminal Double	rhythm;
+
+score		::=	actions:a tempo parts:p 	{:
+												if ((a & 0x01) != 0) jm.util.Play.midi (p);
+												if ((a & 0x02) != 0) jm.util.View.notate(p);
+												if ((a & 0x04) != 0) jm.util.Write.midi(p, "test.midi");
+											:}
+			;
+
+actions		::= todo:t						{: RESULT = t; :}
+			|	actions:a todo:t			{: RESULT = a | t; :}
+			;
+
+todo		::=	PLAY						{: RESULT = 0x01; :}
+			|	VIEW						{: RESULT = 0x02; :}
+			|	SAVE						{: RESULT = 0x04; :}
+			;
+
+tempo		::=	INTEGER:v 					{: parser.tempo = v; :}
+			;
+
+parts		::=								{: RESULT = new Score (); :}
+			|	parts:l part:p TERM2 		{: RESULT = l; l.addPart(p); :}
+			;
+
+part		::=	instrument signature:s phrases:p	{: RESULT = p; p.setNumerator(s.n); p.setDenominator(s.d); p.setKeySignature(s.s); :}
+			;
+
+instrument	::=								{: parser.instrument = jm.JMC.TUBULAR_BELLS; :}
+			|	INSTRUMENT:i				{: parser.instrument = i; :}
+			;
+
+signature	::=								{: RESULT = new Signature (0, 4, 4); :}
+			|	INTEGER:n SLASH INTEGER:d	{: RESULT = new Signature (0, n, d); :}
+			|	INTEGER:s ALTERATION:a		{: RESULT = new Signature (s*a, 4, 4); :}
+			|	INTEGER:s ALTERATION:a INTEGER:n SLASH INTEGER:d
+								 			{: RESULT = new Signature (s*a, n, d); :}
+			;
+
+phrases		::=								{: Part p = new Part (parser.instrument, parser.channel++); p.setTempo(parser.tempo*2); RESULT = p; :}
+			|	phrases:l phrase:p			{: RESULT = l; l.addPhrase(p); :}
+			;
+
+phrase		::=	notes:p TERM1				{: RESULT = p; :}
+			|	BEGIN notes:p END			{: RESULT = p; :}
+			|	REPEAT main END				{: RESULT = parser.repeated; jm.music.tools.Mod.repeat(parser.repeated, 2); :}
+			|	REPEAT main alternates:a END{: Phrase p = new Phrase();
+											   for (Phrase x : a) {
+												   p.addNoteList (x.getNoteArray()); 
+											   }
+											   RESULT = p;
+											:}
+			;
+
+main		::=	 notes:n					{: parser.repeated = n; :}
+			;
+
+alternates	::=	ALTERNATE alternate:a		{: List<Phrase> p = new ArrayList<Phrase> (); p.add (parser.repeated.copy()); p.add (a); RESULT = p; :}
+			|	alternates:l ALTERNATE alternate:a
+											{: l.add (parser.repeated.copy()); l.add (a); RESULT = l; :} 
+			;
+			
+alternate	::=	notes:n						{: RESULT = n; :}
+			;
+
+notes		::=								{: RESULT = new Phrase (); :}
+			|	notes:l note:n				{: RESULT = l; if (n != null) l.addNote(n); :}
+			;
+
+note		::=	sound:s						{: RESULT = s; :}
+			|	rest:r						{: RESULT = r; :}
+			|	dynamic						{: RESULT = null; :}
+			;
+
+dynamic 	::=	DYNAMIC:d					{: parser.dynamic = d; :}
+			;
+
+sound		::=	pitch:n alteration:a octave:o rhythm:r		{: RESULT = new Note (n+a+12*(o-4), r, parser.dynamic); :}
+			;
+
+rest		::=	REST rhythm:r								{: RESULT = new Rest (r); :}
+			;
+
+pitch		::=	 PITCH:n									{: RESULT = n; :}
+			;
+
+alteration	::=												{: RESULT = 0; :}
+			|	ALTERATION:a								{: RESULT = a; :}
+			;
+
+octave		::=												{: RESULT = 4; :}
+			|	INTEGER:n									{: RESULT = n; :}
+			;
+
+rhythm		::=												{: RESULT = jm.JMC.QN; :}
+			|	RHYTHM:n									{: RESULT = n; :}
+			;
+			
+	
+PLAY ::= "joue"	
+      ;				
+VIEW ::="affiche"	
+     ;		
+SAVE ::= "sauve"	
+      ;			
+
+TERM1 ::= ";"
+      ;
+TERM2 ::= "."
+      ;
+
+	
+NOTE ::= DO
+     |   RE 
+     |   MI
+     |   FA
+     |   SOl
+     |   LA
+     |   SI
+     |   PA
+     ;
+
+DO ::= 'do'
+   ;
+RE ::= 're'
+   ;
+MI ::= 'mi'
+   ;
+FA ::= 'fa'
+   ;
+SOL ::= 'sol'
+   ;
+LA ::= 'la'
+   ;
+SI ::= 'si'
+   ;
+PA ::= 'pa'
+   ;
+
+INTEGER ::= `[0-9]`
+        ;   
+        
+INSTRUMENT ::= PIANO
+           |  VIOLON 
+           |  TROMPETTE
+           |  SAXOFONE
+           |  HAUT-BOIS
+           |  CLARINETTE
+           ;  		
+
+VIOLON ::=  'violon'
+        ;			
+        
+TROMPETTE   ::=  'trompette'
+             ;
+
+CLARINETTE   ::=  'clarinette'
+             ;
+SAXOFONE     ::=  'saxofone'
+             ;
+HAUT-BOIS    ::=  'haut-bois'
+             ;
+PIANO        ::=  'piano'
+             ;
+   
+        
+        "joue"					{ return symbol (ETerminal.PLAY); }
+"affiche"				{ return symbol (ETerminal.VIEW); }
+"sauve"					{ return symbol (ETerminal.SAVE); }
+
+";"						{ return symbol (ETerminal.TERM1); }
+"."						{ return symbol (ETerminal.TERM2); }
+
+"/"						{ return symbol (ETerminal.SLASH); }
+"debut"					{ return symbol (ETerminal.BEGIN); }
+"repeter"				{ return symbol (ETerminal.REPEAT); }
+"fin"					{ return symbol (ETerminal.END); }
+"alternatif"			{ return symbol (ETerminal.ALTERNATE); }
+
+"R"						{ return symbol (ETerminal.RHYTHM, Double.valueOf(jm.JMC.WN)); }
+"B"						{ return symbol (ETerminal.RHYTHM, Double.valueOf(jm.JMC.HN)); }
+"B."					{ return symbol (ETerminal.RHYTHM, Double.valueOf(jm.JMC.DHN)); }
+"N"						{ return symbol (ETerminal.RHYTHM, Double.valueOf(jm.JMC.QN)); }
+"N."					{ return symbol (ETerminal.RHYTHM, Double.valueOf(jm.JMC.DQN)); }
+"C"						{ return symbol (ETerminal.RHYTHM, Double.valueOf(jm.JMC.EN)); }
+"C."					{ return symbol (ETerminal.RHYTHM, Double.valueOf(jm.JMC.DEN)); }
+"D"						{ return symbol (ETerminal.RHYTHM, Double.valueOf(jm.JMC.SN)); }
+"D."					{ return symbol (ETerminal.RHYTHM, Double.valueOf(jm.JMC.DSN)); }
+"T"						{ return symbol (ETerminal.RHYTHM, Double.valueOf(jm.JMC.TSN)); }
+
+"ppp"   				{ return symbol (ETerminal.DYNAMIC, Integer.valueOf(jm.JMC.PPP)); }
+"pp"   					{ return symbol (ETerminal.DYNAMIC, Integer.valueOf(jm.JMC.PP)); }
+"p"   					{ return symbol (ETerminal.DYNAMIC, Integer.valueOf(jm.JMC.P)); }
+"mp"   					{ return symbol (ETerminal.DYNAMIC, Integer.valueOf(jm.JMC.MP)); }
+"mf"   					{ return symbol (ETerminal.DYNAMIC, Integer.valueOf(jm.JMC.MF)); }
+"f"   					{ return symbol (ETerminal.DYNAMIC, Integer.valueOf(jm.JMC.F)); }
+"ff"   					{ return symbol (ETerminal.DYNAMIC, Integer.valueOf(jm.JMC.FF)); }
+"fff"  					{ return symbol (ETerminal.DYNAMIC, Integer.valueOf(jm.JMC.FFF)); }
+
+[0-9]+      			{ return symbol (ETerminal.INTEGER, Integer.valueOf(yytext())); }
+
+
