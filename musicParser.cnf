@@ -1,0 +1,227 @@
+package fr.uha.hassenforder.javacup.sample.jmusic.reader;
+
+parser import code {:
+    import jm.music.data.Score;
+    import jm.music.data.Part;
+    import jm.music.data.Phrase;
+    import jm.music.data.Note;
+    import jm.music.data.Rest;
+    import jm.JMC;
+    import java.util.List;
+    import java.util.ArrayList;
+:}
+
+parser code {:
+    
+    public void report_error(String message, Object info) {
+        StringBuffer m = new StringBuffer("Error");
+		m.append (info.toString());
+        m.append(" : "+message);
+        System.err.println(m.toString());
+    }
+   
+    public void report_fatal_error(String message, Object info) {
+        report_error(message, info);
+        System.exit(1);
+    }
+
+	private int channel = 0;
+	private int tempo = JMC.MP;
+	private int instrument = jm.JMC.TUBULAR_BELLS;
+	private int dynamic = JMC.MP;
+	private Phrase repeated;
+	static private class Signature {
+	   public int s;
+	   public int n;
+	   public int d;
+	   
+	   public Signature (int s, int n, int d) {
+		   this.s = s;
+		   this.n = n;
+		   this.d = d;
+	   }
+	}
+:}
+scanner code {:
+    private void fallback () {
+		throw new Error("Unrecognized character '"+yytext()+"' -- ignored");
+	}    
+:}
+
+terminal			ALTERNATE;
+terminal Integer	PITCH, ALTERATION;
+terminal			REST;
+terminal Double		RHYTHM;
+terminal Integer	INTEGER, DYNAMIC;
+terminal Integer	INSTRUMENT;
+terminal String     ID;
+
+nonterminal 		score, temps, instrument, main;
+nonterminal Integer actions, todo;
+nonterminal	Signature	signature;
+nonterminal Score	parts;
+nonterminal Part	part, texte_de_notes;
+nonterminal Phrase	texte_de_note, notes, alternate;
+nonterminal List<Phrase>	alternates;
+nonterminal Note	note, rest;
+nonterminal Note	sound;
+nonterminal			dynamic;
+nonterminal Integer	pitch, alteration, octave;
+nonterminal Double	rhythm;
+
+nonterminal         morceau,portee;
+nonterminal         portees;
+nonterminal         boucle;
+nonterminal         sequence;
+
+start with morceau;
+
+morceau     ::= "Mon morceau {" portees "};"
+            ;
+
+portees     ::= portee*
+            ;
+
+portee		::=	actions:a temps parts:p 	{: jm.util.Play.midi (p); :}
+            ;
+            
+actions		::= todo:t						{: RESULT = t; :}
+			|	actions:a todo:t			{: RESULT = a | t; :}
+			;
+
+todo		::=	"joue"						{: RESULT = 0x01; :}
+			;
+
+temps		::=	INTEGER:v 					{: parser.tempo = v; :}
+			;
+			
+
+parts		::=								{: RESULT = new Score (); :}
+			|	parts:l part:p "." 		{: RESULT = l; l.addPart(p); :}
+			;
+
+part		::=	instrument signature:s texte_de_notes:p	{: RESULT = p; p.setNumerator(s.n); p.setDenominator(s.d); p.setKeySignature(s.s); :}
+			;
+
+instrument	::=								{: parser.instrument = jm.JMC.TUBULAR_BELLS; :}
+			|	INSTRUMENT:i				{: parser.instrument = i; :}
+			;
+
+signature	::=								{: RESULT = new Signature (0, 4, 4); :}
+			|	INTEGER:n "/" INTEGER:d	{: RESULT = new Signature (0, n, d); :}
+			|	INTEGER:s ALTERATION:a		{: RESULT = new Signature (s*a, 4, 4); :}
+			|	INTEGER:s ALTERATION:a INTEGER:n "/" INTEGER:d
+								 			{: RESULT = new Signature (s*a, n, d); :}
+			;
+
+texte_de_notes		::=								                {: Part p = new Part (parser.instrument, parser.channel++); p.setTempo(parser.tempo*2); RESULT = p; :}
+			        |	texte_de_notes:l texte_de_note:p			{: RESULT = l; l.addPhrase(p); :}
+			        ;
+
+texte_de_note		::= "debut" notes:p "fin"			{: RESULT = p; :}
+			        |	boucle
+			        ;
+			        
+boucle      ::= "repeter"  main        "fin"	    {: RESULT = parser.repeated; jm.music.tools.Mod.repeat(parser.repeated, 2); :}
+            |	"repeter"  main boucle "fin"		{: RESULT = parser.repeated; jm.music.tools.Mod.repeat(parser.repeated, 2); :}
+            ;
+            
+sequence    ::= "sequence" ID:id "="  notes:p ";"   {: parser.getTable().setValue (id,p) :} 
+            ;
+            
+main		::=	 notes:n					{: parser.repeated = n; :}
+			;
+
+notes		::=								{: RESULT = new Phrase (); :}
+			|	notes:l note:n				{: RESULT = l; if (n != null) l.addNote(n); :}
+			;
+
+note		::=	sound:s						{: RESULT = s; :}
+			|	rest:r						{: RESULT = r; :}
+			|	dynamic						{: RESULT = null; :}
+			;
+
+dynamic 	::=	DYNAMIC:d					{: parser.dynamic = d; :}
+			;
+
+sound		::=	pitch:n alteration:a octave:o rhythm:r		{: RESULT = new Note (n+a+12*(o-4), r, parser.dynamic); :}
+			;
+
+rest		::=	REST rhythm:r								{: RESULT = new Rest (r); :}
+			;
+
+pitch		::=	PITCH:n									    {: RESULT = n; :}
+			;
+
+alteration	::=												{: RESULT = 0; :}
+			|	ALTERATION:a								{: RESULT = a; :}
+			;
+
+octave		::=												{: RESULT = 4; :}
+			|	INTEGER:n									{: RESULT = n; :}
+			;
+
+rhythm		::=												{: RESULT = jm.JMC.QN; :}
+			|	RHYTHM:n									{: RESULT = n; :}
+			;
+			
+INTEGER	    ::=	`[0-9]+`
+			;
+			
+ID          ::=	`[a-zA-Z_][a-zA-Z0-9]*` 
+            ;
+       
+            
+PITCH       ::= "DO" 		{: return symbol (ETerminal.PITCH, Integer.valueOf(jm.JMC.C4));  :}
+            |   "RE"        {: return symbol (ETerminal.PITCH, Integer.valueOf(jm.JMC.D4)); :}
+            |   "MI"        {: return symbol (ETerminal.PITCH, Integer.valueOf(jm.JMC.E4)); :}
+            |   "FA"        {: return symbol (ETerminal.PITCH, Integer.valueOf(jm.JMC.F4)); :}
+            |   "SOL"       {: return symbol (ETerminal.PITCH, Integer.valueOf(jm.JMC.G4)); :}
+            |   "LA"        {: return symbol (ETerminal.PITCH, Integer.valueOf(jm.JMC.A4)); :}
+            |   "SI"        {: return symbol (ETerminal.PITCH, Integer.valueOf(jm.JMC.B4)); :}
+            ;
+            
+REST        ::= "PA"
+            ; 
+            
+RHYTHM      ::= "R" 		{: return symbol (ETerminal.RHYTHM, Double.valueOf(jm.JMC.WN));  :}
+            |   "B"         {: return symbol (ETerminal.RHYTHM, Double.valueOf(jm.JMC.HN));  :}
+            |   "B."        {: return symbol (ETerminal.RHYTHM, Double.valueOf(jm.JMC.DHN)); :}
+            |   "N"         {: return symbol (ETerminal.RHYTHM, Double.valueOf(jm.JMC.QN));  :}
+            |   "N."        {: return symbol (ETerminal.RHYTHM, Double.valueOf(jm.JMC.DQN)); :}
+            |   "C"         {: return symbol (ETerminal.RHYTHM, Double.valueOf(jm.JMC.EN));  :}
+            |   "C."        {: return symbol (ETerminal.RHYTHM, Double.valueOf(jm.JMC.DEN)); :}
+            |   "D"         {: return symbol (ETerminal.RHYTHM, Double.valueOf(jm.JMC.SN));  :}
+            |   "D."        {: return symbol (ETerminal.RHYTHM, Double.valueOf(jm.JMC.DSN)); :}
+            |   "T"         {: return symbol (ETerminal.RHYTHM, Double.valueOf(jm.JMC.TSN)); :}
+            ; 
+
+DYNAMIC     ::= "ppp" 		{: return symbol (ETerminal.DYNAMIC, Integer.valueOf(jm.JMC.PPP)); :}
+            |   "pp"        {: return symbol (ETerminal.DYNAMIC, Integer.valueOf(jm.JMC.PP));  :}
+            |   "p"         {: return symbol (ETerminal.DYNAMIC, Integer.valueOf(jm.JMC.P));   :}
+            |   "mp"        {: return symbol (ETerminal.DYNAMIC, Integer.valueOf(jm.JMC.MP));  :}
+            |   "mf"        {: return symbol (ETerminal.DYNAMIC, Integer.valueOf(jm.JMC.MF));  :}
+            |   "f"         {: return symbol (ETerminal.DYNAMIC, Integer.valueOf(jm.JMC.F));   :}
+            |   "ff"        {: return symbol (ETerminal.DYNAMIC, Integer.valueOf(jm.JMC.FF));  :}
+            |   "fff"       {: return symbol (ETerminal.DYNAMIC, Integer.valueOf(jm.JMC.FFF)); :}
+            ;
+
+INSTRUMENT  ::= "piano" 		{: return symbol   (ETerminal.INSTRUMENT, Integer.valueOf(jm.JMC.PIANO));     :}
+            |   "violon"        {: return symbol   (ETerminal.INSTRUMENT, Integer.valueOf(jm.JMC.VIOLIN));    :}
+            |   "trompette"     {: return symbol   (ETerminal.INSTRUMENT, Integer.valueOf(jm.JMC.TRUMPET));   :}
+            |   "clarinette"    {: return symbol   (ETerminal.INSTRUMENT, Integer.valueOf(jm.JMC.CLARINET));  :}
+            |   "saxophone"     {: return symbol   (ETerminal.INSTRUMENT, Integer.valueOf(jm.JMC.SAXOPHONE)); :}
+            |   "haut-bois"     {: return symbol   (ETerminal.INSTRUMENT, Integer.valueOf(jm.JMC.OBOE));      :}
+            ; 
+
+terminal void SPACES, COMMENT, PIPE;
+
+COMMENT		::=	'"//".*'
+			|	"/*" ~ "*/"
+			;
+
+
+SPACES		::=	`[ \t\f\r\n]+`
+			;
+PIPE        ::= "|"
+            ;
